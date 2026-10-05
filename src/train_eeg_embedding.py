@@ -1,3 +1,4 @@
+import argparse
 import json
 import numpy as np
 import torch
@@ -10,6 +11,44 @@ EPOCHS = 20
 LEARNING_RATE = 1e-3
 EMBEDDING_SIZE = 128
 NUM_SUBJECTS = 100
+SUPPORTED_FREQUENCIES = (
+    8.0, 8.5, 9.0, 9.5, 10.0, 10.5, 11.0, 11.5, 12.0
+)
+DEFAULT_TRAINING_FREQUENCIES = (8.0, 9.0, 10.0, 11.0)
+DEFAULT_TRAINING_SESSIONS = (0, 1, 2, 3, 4)
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--frequencies",
+    type=float,
+    nargs="+",
+    choices=SUPPORTED_FREQUENCIES,
+    default=DEFAULT_TRAINING_FREQUENCIES,
+    help="SSVEP frequencies to include in training.",
+)
+parser.add_argument(
+    "--seed",
+    type=int,
+    default=42,
+    help="Random seed for model initialization and trial shuffling.",
+)
+parser.add_argument(
+    "--sessions",
+    type=int,
+    nargs="+",
+    choices=range(7),
+    default=DEFAULT_TRAINING_SESSIONS,
+    help="Session numbers to use for training.",
+)
+args = parser.parse_args()
+training_frequencies = tuple(sorted(set(args.frequencies)))
+training_sessions = tuple(sorted(set(args.sessions)))
+np.random.seed(args.seed)
+torch.manual_seed(args.seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(args.seed)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -164,6 +203,7 @@ print("Subjects:", NUM_SUBJECTS)
 print("Batch size:", BATCH_SIZE)
 print("Epochs:", EPOCHS)
 print("Embedding:", EMBEDDING_SIZE)
+print("Random seed:", args.seed)
 print()
 
 
@@ -173,15 +213,18 @@ print()
 metadata = [
     item
     for item in metadata
-    if item["frequency"] in (8.0, 9.0, 10.0, 11.0)
+    if item["frequency"] in training_frequencies
+    and item["session"] in training_sessions
 ]
 
 print(
-    "Training trials (9 Hz only):",
+    "Training sessions:",
+    training_sessions
+)
+print(
+    f"Training trials ({', '.join(map(str, training_frequencies))} Hz):",
     len(metadata)
 )
-
-print("Training trials after removing 12 Hz:", len(metadata))
 dataset = EEGDataset(metadata)
 
 loader = DataLoader(
@@ -298,6 +341,9 @@ torch.save(
         "model_state_dict": model.state_dict(),
         "embedding_size": EMBEDDING_SIZE,
         "num_subjects": NUM_SUBJECTS,
+        "training_frequencies": list(training_frequencies),
+        "training_sessions": list(training_sessions),
+        "seed": args.seed,
     },
     output_file
 )
