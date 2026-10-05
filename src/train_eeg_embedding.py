@@ -1,12 +1,9 @@
-import os
 import json
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-
-
-CACHE_ROOT = r"E:\ssvep-cache"
+from paths import CACHE_ROOT, resolve_cache_file
 
 BATCH_SIZE = 32
 EPOCHS = 20
@@ -40,7 +37,7 @@ class EEGDataset(Dataset):
 
         item = self.metadata[index]
 
-        eeg = np.load(item["file"]).astype(np.float32)
+        eeg = np.load(resolve_cache_file(item["file"])).astype(np.float32)
 
         # Shape:
         # channels x samples
@@ -154,10 +151,7 @@ class EEGEmbeddingNet(nn.Module):
 # Load metadata
 # ---------------------------------------------------------
 
-metadata_file = os.path.join(
-    CACHE_ROOT,
-    "metadata.json"
-)
+metadata_file = CACHE_ROOT / "metadata.json"
 
 with open(metadata_file, "r") as f:
 
@@ -297,10 +291,7 @@ for epoch in range(EPOCHS):
 # Save model
 # ---------------------------------------------------------
 
-output_file = os.path.join(
-    CACHE_ROOT,
-    "eeg_embedding_model.pt"
-)
+output_file = CACHE_ROOT / "eeg_embedding_model.pt"
 
 torch.save(
     {

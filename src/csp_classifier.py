@@ -1,6 +1,6 @@
 import mne
 import numpy as np
-from pathlib import Path
+from paths import find_eeg_files
 
 from mne.decoding import CSP
 from sklearn.svm import SVC
@@ -9,14 +9,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score
 
 
-DATASET = Path(r"E:\ssvep-data")
-
 
 records = []
 
-files = sorted(
-    DATASET.glob("sub-*/ses-*/eeg/*_eeg.set")
-)
+files = find_eeg_files()
 
 print(f"Found {len(files)} recordings")
 

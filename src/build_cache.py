@@ -1,10 +1,7 @@
-import os
 import json
 import numpy as np
 import mne
-
-DATA_ROOT = r"E:\ssvep-data"
-CACHE_ROOT = r"E:\ssvep-cache"
+from paths import CACHE_ROOT, find_eeg_files
 
 FREQUENCIES = {
     "8": 8.0,
@@ -21,16 +18,8 @@ FREQUENCIES = {
 TARGET_SFREQ = 250
 TRIAL_SECONDS = 6
 
-os.makedirs(CACHE_ROOT, exist_ok=True)
-
-files = []
-
-for root, dirs, filenames in os.walk(DATA_ROOT):
-    for filename in filenames:
-        if filename.endswith("_eeg.set"):
-            files.append(os.path.join(root, filename))
-
-files.sort()
+CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+files = find_eeg_files("**/*_eeg.set")
 
 print(f"Found {len(files)} EEG recordings")
 print(f"Cache: {CACHE_ROOT}")
@@ -42,15 +31,15 @@ total_trials = 0
 for file_index, filepath in enumerate(files, 1):
 
     # Extract subject/session from path
-    parts = filepath.replace("\\", "/").split("/")
+    parts = filepath.parts
 
     subject = next(
-        (p.replace("sub-", "") for p in parts if p.startswith("sub-")),
+        (p.removeprefix("sub-") for p in parts if p.startswith("sub-")),
         None
     )
 
     session = next(
-        (p.replace("ses-", "") for p in parts if p.startswith("ses-")),
+        (p.removeprefix("ses-") for p in parts if p.startswith("ses-")),
         None
     )
 
@@ -71,7 +60,7 @@ for file_index, filepath in enumerate(files, 1):
     )
 
     raw = mne.io.read_raw_eeglab(
-        filepath,
+        str(filepath),
         preload=True,
         verbose=False
     )
@@ -99,13 +88,8 @@ for file_index, filepath in enumerate(files, 1):
     sfreq = raw.info["sfreq"]
 
     # Create output directory for this subject/session
-    output_dir = os.path.join(
-        CACHE_ROOT,
-        f"sub-{subject}",
-        f"ses-{session}"
-    )
-
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = CACHE_ROOT / f"sub-{subject}" / f"ses-{session}"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Find every SSVEP trial
     for annotation_index, annotation in enumerate(raw.annotations):
@@ -143,15 +127,12 @@ for file_index, filepath in enumerate(files, 1):
             f"{frequency:g}hz"
         )
 
-        output_file = os.path.join(
-            output_dir,
-            trial_id + ".npy"
-        )
+        output_file = output_dir / (trial_id + ".npy")
 
         np.save(output_file, trial)
 
         metadata.append({
-            "file": output_file,
+            "file": output_file.relative_to(CACHE_ROOT).as_posix(),
             "subject": subject,
             "session": session,
             "frequency": frequency,
@@ -166,10 +147,7 @@ for file_index, filepath in enumerate(files, 1):
     print(f"    Cached trials: {total_trials}")
 
 # Save metadata
-metadata_file = os.path.join(
-    CACHE_ROOT,
-    "metadata.json"
-)
+metadata_file = CACHE_ROOT / "metadata.json"
 
 with open(metadata_file, "w") as f:
     json.dump(metadata, f, indent=2)

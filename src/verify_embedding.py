@@ -1,22 +1,12 @@
-import os
 import json
 import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.metrics import roc_auc_score, roc_curve
+from paths import CACHE_ROOT, resolve_cache_file
 
-
-CACHE_ROOT = r"E:\ssvep-cache"
-
-MODEL_FILE = os.path.join(
-    CACHE_ROOT,
-    "eeg_embedding_model.pt"
-)
-
-TEST_METADATA_FILE = os.path.join(
-    CACHE_ROOT,
-    "test_metadata.json"
-)
+MODEL_FILE = CACHE_ROOT / "eeg_embedding_model.pt"
+TEST_METADATA_FILE = CACHE_ROOT / "test_metadata.json"
 
 DEVICE = torch.device(
     "cuda" if torch.cuda.is_available() else "cpu"
@@ -220,7 +210,7 @@ def extract_embeddings(items):
         for index, item in enumerate(items):
 
             eeg = np.load(
-                item["file"]
+                resolve_cache_file(item["file"])
             ).astype(np.float32)
 
             eeg = torch.from_numpy(eeg)

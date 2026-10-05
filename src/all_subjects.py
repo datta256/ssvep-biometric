@@ -1,8 +1,6 @@
 import mne
 import numpy as np
-from pathlib import Path
-
-DATASET = Path(r"E:\ssvep-data")
+from paths import find_eeg_files
 
 CHANNELS = [
     "PO7", "PO5", "PO3", "POz", "PO4",
@@ -13,9 +11,7 @@ fingerprints = {}
 
 print("Finding EEG files...")
 
-files = sorted(
-    DATASET.glob("sub-*/ses-0/eeg/*_eeg.set")
-)
+files = find_eeg_files("sub-*/ses-0/eeg/*_eeg.set")
 
 print(f"Found {len(files)} subjects")
 

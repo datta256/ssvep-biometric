@@ -1,5 +1,8 @@
 import mne
 import numpy as np
+from paths import get_data_root
+
+DATA_ROOT = get_data_root()
 
 CHANNELS = [
     "PO7", "PO5", "PO3", "POz", "PO4",
@@ -9,12 +12,12 @@ CHANNELS = [
 FILES = [
     (
         1,
-        r"E:\ssvep-data\sub-1\ses-0\eeg\sub-1_ses-0_task-ssvep_run-0_eeg.set",
+        DATA_ROOT / "sub-1" / "ses-0" / "eeg" / "sub-1_ses-0_task-ssvep_run-0_eeg.set",
         10.304,
     ),
     (
         2,
-        r"E:\ssvep-data\sub-2\ses-0\eeg\sub-2_ses-0_task-ssvep_run-0_eeg.set",
+        DATA_ROOT / "sub-2" / "ses-0" / "eeg" / "sub-2_ses-0_task-ssvep_run-0_eeg.set",
         70.691,
     ),
 ]
@@ -25,7 +28,7 @@ for subject, filename, onset in FILES:
     print(f"\nLoading subject {subject}...")
 
     raw = mne.io.read_raw_eeglab(
-        filename,
+        str(filename),
         preload=True,
         verbose=False,
     )

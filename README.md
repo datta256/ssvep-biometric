@@ -78,26 +78,41 @@ The dataset is not included in this repository.
 
 ------------------------------------------------------------------------
 
-## 3. Example local paths
+## 3. Portable data and cache paths
 
-The scripts currently use these example paths:
+The scripts do not depend on a particular drive or operating system. By
+default, they look for the dataset in `data/` and write preprocessed
+trials, metadata, and model files to `cache/`, both inside the project
+directory. These folders are ignored by Git.
 
-``` text
-Project:
-C:\path\to\ssvep-biometric
+To keep the large dataset and cache on another drive, configure their
+locations with environment variables before running scripts. For example,
+in PowerShell:
 
-Raw dataset:
-E:\ssvep-data
-
-Preprocessed cache:
-E:\ssvep-cache
-
-Python virtual environment:
-E:\ssvep-venv
+``` powershell
+$env:SSVEP_DATA_DIR = "D:\datasets\eldBETA"
+$env:SSVEP_CACHE_DIR = "D:\ssvep-cache"
 ```
 
-If your paths are different, change the constants in the Python scripts
-before running them.
+On macOS/Linux, use:
+
+``` bash
+export SSVEP_DATA_DIR="$HOME/datasets/eldBETA"
+export SSVEP_CACHE_DIR="$HOME/ssvep-cache"
+```
+
+Both variables are optional. If omitted, the project-local `data/` and
+`cache/` directories are used. The variables must point to the dataset
+root containing the `sub-*/ses-*/eeg/` directories and to the cache
+directory, respectively. Set them again in each new terminal unless you
+configure them permanently in your operating system.
+
+For example, to keep using the existing E: drive folders on Windows:
+
+``` powershell
+$env:SSVEP_DATA_DIR = "E:\ssvep-data"
+$env:SSVEP_CACHE_DIR = "E:\ssvep-cache"
+```
 
 ------------------------------------------------------------------------
 
@@ -119,10 +134,10 @@ experiments do not require a GPU.
 
 ## Step 1 --- Clone/open the project
 
-Open the project in VS Code:
+Open the project in VS Code and run commands from the project directory:
 
 ``` powershell
-cd C:\path\to\ssvep-biometric
+cd "C:\path\to\ssvep-biometric"
 ```
 
 Or open the folder directly in VS Code.
@@ -131,33 +146,23 @@ Or open the folder directly in VS Code.
 
 ## Step 2 --- Create/use the Python environment
 
-The current environment was created on the E: drive to avoid filling the
-C: drive.
-
-Activate it:
+Create a virtual environment inside the project:
 
 ``` powershell
-E:\ssvep-venv\Scripts\Activate.ps1
+py -3.12 -m venv .venv
 ```
 
-Check Python:
+Activate it and check Python:
 
 ``` powershell
+.\.venv\Scripts\Activate.ps1
 python --version
 ```
 
-The working environment used Python 3.12.
+On macOS/Linux, activate it with:
 
-If you need to create the environment again:
-
-``` powershell
-py -3.12 -m venv E:\ssvep-venv
-```
-
-Then:
-
-``` powershell
-E:\ssvep-venv\Scripts\Activate.ps1
+``` bash
+source .venv/bin/activate
 ```
 
 ------------------------------------------------------------------------
@@ -209,25 +214,33 @@ Install it if necessary:
 pip install nemar-py
 ```
 
-Download the dataset:
+Choose a dataset location. To use the project default:
 
 ``` powershell
-nemar-py download nm000130 -t v1.0.3 -o E:\ssvep-data --datatype eeg --downloader python -j 4 --trust-existing --verbose
+New-Item -ItemType Directory -Force .\data
+nemar-py download nm000130 -t v1.0.3 -o .\data --datatype eeg --downloader python -j 4 --trust-existing --verbose
 ```
 
-This is a large download. The current dataset storage is approximately
-**37 GB**.
+To store it elsewhere, set the variable from the previous section and use
+that path instead:
 
-Make sure the E: drive has sufficient free space before starting.
+``` powershell
+$env:SSVEP_DATA_DIR = "D:\datasets\eldBETA"
+nemar-py download nm000130 -t v1.0.3 -o $env:SSVEP_DATA_DIR --datatype eeg --downloader python -j 4 --trust-existing --verbose
+```
+
+This is a large download. The dataset storage is approximately **37 GB**.
+
+Make sure the selected drive has sufficient free space before starting.
 
 ------------------------------------------------------------------------
 
 # 7. Expected dataset structure
 
-A typical recording looks like:
+A typical recording under the dataset root looks like:
 
 ``` text
-E:\ssvep-data\
+data\
 └── sub-1\
     └── ses-0\
         └── eeg\
@@ -291,10 +304,11 @@ Sessions: 5–6
 Usable trials: 1,800
 ```
 
-Metadata is stored at:
+Metadata is stored in the configured cache directory (the default is
+`cache/`):
 
 ``` text
-E:\ssvep-cache\test_metadata.json
+cache\test_metadata.json
 ```
 
 ------------------------------------------------------------------------
@@ -538,10 +552,11 @@ Epochs: 20
 Device: CUDA
 ```
 
-The trained model is saved as:
+The trained model is saved in the configured cache directory (the
+default is `cache/`):
 
 ``` text
-E:\ssvep-cache\eeg_embedding_model.pt
+cache\eeg_embedding_model.pt
 ```
 
 ------------------------------------------------------------------------
@@ -986,7 +1001,7 @@ Final test → session 6
 Activate environment:
 
 ``` powershell
-E:\ssvep-venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 ```
 
 Build training cache:
