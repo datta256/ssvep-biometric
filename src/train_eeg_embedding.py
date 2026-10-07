@@ -4,6 +4,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+from eeg_embedding_model import EEGEmbeddingNet
+from eeg_channels import CHANNEL_NAMES
 from paths import CACHE_ROOT, resolve_cache_file
 
 BATCH_SIZE = 32
@@ -40,9 +42,27 @@ parser.add_argument(
     default=DEFAULT_TRAINING_SESSIONS,
     help="Session numbers to use for training.",
 )
+parser.add_argument(
+    "--channels",
+    nargs="+",
+    choices=CHANNEL_NAMES,
+    default=None,
+    help="EEG channels to use; defaults to all 64 channels.",
+)
+parser.add_argument(
+    "--output",
+    default=str(CACHE_ROOT / "eeg_embedding_model.pt"),
+    help="Checkpoint output path.",
+)
 args = parser.parse_args()
 training_frequencies = tuple(sorted(set(args.frequencies)))
 training_sessions = tuple(sorted(set(args.sessions)))
+if args.channels and len(set(args.channels)) != len(args.channels):
+    parser.error("Channel names must not be repeated.")
+training_channels = tuple(
+    CHANNEL_NAMES.index(channel)
+    for channel in (args.channels or CHANNEL_NAMES)
+)
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
 if torch.cuda.is_available():
@@ -64,9 +84,10 @@ if DEVICE.type == "cuda":
 
 class EEGDataset(Dataset):
 
-    def __init__(self, metadata):
+    def __init__(self, metadata, channel_indices):
 
         self.metadata = metadata
+        self.channel_indices = channel_indices
 
     def __len__(self):
 
@@ -77,6 +98,7 @@ class EEGDataset(Dataset):
         item = self.metadata[index]
 
         eeg = np.load(resolve_cache_file(item["file"])).astype(np.float32)
+        eeg = eeg[self.channel_indices, :]
 
         # Shape:
         # channels x samples
@@ -89,101 +111,6 @@ class EEGDataset(Dataset):
         label = item["subject"] - 1
 
         return eeg, label
-
-
-# ---------------------------------------------------------
-# EEG embedding network
-# ---------------------------------------------------------
-
-class EEGEmbeddingNet(nn.Module):
-
-    def __init__(self, num_subjects=100, embedding_size=128):
-
-        super().__init__()
-
-        self.features = nn.Sequential(
-
-            # Temporal filtering
-            nn.Conv2d(
-                1,
-                16,
-                kernel_size=(1, 31),
-                padding=(0, 15),
-                bias=False
-            ),
-
-            nn.BatchNorm2d(16),
-
-            nn.ELU(),
-
-            # Spatial filtering across 64 EEG channels
-            nn.Conv2d(
-                16,
-                32,
-                kernel_size=(64, 1),
-                groups=16,
-                bias=False
-            ),
-
-            nn.BatchNorm2d(32),
-
-            nn.ELU(),
-
-            nn.AvgPool2d(
-                kernel_size=(1, 4)
-            ),
-
-            nn.Dropout(0.25),
-
-            # More temporal processing
-            nn.Conv2d(
-                32,
-                64,
-                kernel_size=(1, 15),
-                padding=(0, 7),
-                bias=False
-            ),
-
-            nn.BatchNorm2d(64),
-
-            nn.ELU(),
-
-            nn.AvgPool2d(
-                kernel_size=(1, 4)
-            ),
-
-            nn.Dropout(0.25)
-        )
-
-        self.embedding = nn.Sequential(
-
-            nn.AdaptiveAvgPool2d((1, 1)),
-
-            nn.Flatten(),
-
-            nn.Linear(
-                64,
-                embedding_size
-            ),
-
-            nn.LayerNorm(embedding_size)
-        )
-
-        self.classifier = nn.Linear(
-            embedding_size,
-            num_subjects
-        )
-
-
-    def forward(self, x):
-
-        x = self.features(x)
-
-        embedding = self.embedding(x)
-
-        logits = self.classifier(embedding)
-
-        return embedding, logits
 
 
 # ---------------------------------------------------------
@@ -204,6 +131,7 @@ print("Batch size:", BATCH_SIZE)
 print("Epochs:", EPOCHS)
 print("Embedding:", EMBEDDING_SIZE)
 print("Random seed:", args.seed)
+print("Channels:", [CHANNEL_NAMES[index] for index in training_channels])
 print()
 
 
@@ -225,7 +153,7 @@ print(
     f"Training trials ({', '.join(map(str, training_frequencies))} Hz):",
     len(metadata)
 )
-dataset = EEGDataset(metadata)
+dataset = EEGDataset(metadata, training_channels)
 
 loader = DataLoader(
     dataset,
@@ -242,7 +170,8 @@ loader = DataLoader(
 
 model = EEGEmbeddingNet(
     num_subjects=NUM_SUBJECTS,
-    embedding_size=EMBEDDING_SIZE
+    embedding_size=EMBEDDING_SIZE,
+    num_channels=len(training_channels),
 )
 
 model = model.to(DEVICE)
@@ -334,7 +263,7 @@ for epoch in range(EPOCHS):
 # Save model
 # ---------------------------------------------------------
 
-output_file = CACHE_ROOT / "eeg_embedding_model.pt"
+output_file = args.output
 
 torch.save(
     {
@@ -343,6 +272,8 @@ torch.save(
         "num_subjects": NUM_SUBJECTS,
         "training_frequencies": list(training_frequencies),
         "training_sessions": list(training_sessions),
+        "channel_indices": list(training_channels),
+        "channel_names": [CHANNEL_NAMES[index] for index in training_channels],
         "seed": args.seed,
     },
     output_file

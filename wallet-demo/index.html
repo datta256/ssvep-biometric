@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Research-only EEG-gated Base Sepolia wallet demo">
+    <title>NeuroKey | Testnet Demo</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="/">NEURO<span>KEY</span></a>
+        <span class="network"><i></i> BASE SEPOLIA</span>
+      </header>
+
+      <section class="hero">
+        <p class="eyebrow">EEG WALLET · RESEARCH BUILD</p>
+        <h1>EEG match.<br><span>Wallet signature.</span></h1>
+        <p class="intro">
+          A local model checks a research recording. If it matches, your
+          testnet wallet separately asks you to approve a signature.
+        </p>
+      </section>
+
+      <aside class="warning">
+        <strong>DEMO ONLY — NOT SECURITY</strong>
+        <p>
+          This demo uses public, replayable eldBETA recordings—not a live EEG
+          headset. A passing model result triggers local key decryption, but
+          the browser gate can be bypassed because the app and stored wrapping
+          key are under your control. Use a throwaway testnet wallet only;
+          never import a mainnet key or use real funds.
+        </p>
+      </aside>
+
+      <section class="card explainer">
+        <div class="section-heading">
+          <span class="step">INFO</span>
+          <div>
+            <h2>How this demo works</h2>
+            <p>A random wallet key is encrypted on this device; an accepted model check triggers its decryption for signing.</p>
+          </div>
+        </div>
+        <ol class="flow-list">
+          <li>
+            <span class="flow-number">1</span>
+            <div><strong>Create a local demo wallet</strong><p>The browser generates a random wallet key and encrypts it with AES-GCM. The encrypted key and a non-exportable Web Crypto key are stored in this browser; there is no MetaMask custody.</p></div>
+          </li>
+          <li>
+            <span class="flow-number">2</span>
+            <div><strong>Enroll a dataset demo profile</strong><p>Choose an anonymous subject ID. The local service builds its template from cached session-4 recordings; the mapping to the wallet stays in this browser.</p></div>
+          </li>
+          <li>
+            <span class="flow-number">3</span>
+            <div><strong>Run the EEG model</strong><p>The local Python service evaluates a cached session-6 recording, compares the 8-channel embedding with the profile template, and checks the threshold calibrated on session 5.</p></div>
+          </li>
+          <li>
+            <span class="flow-number">4</span>
+            <div><strong>Passing match decrypts the key</strong><p>On a pass, this page retrieves the browser-held AES key and decrypts the wallet private key into JavaScript memory. The model does not derive the cryptographic key.</p></div>
+          </li>
+          <li>
+            <span class="flow-number">5</span>
+            <div><strong>Unlocked wallet signs</strong><p>You explicitly approve signing the challenge with the decrypted local wallet, then separately confirm a zero-value self-transfer. The app signs and broadcasts it through the Base Sepolia RPC.</p></div>
+          </li>
+        </ol>
+        <div class="boundary-note">
+          <strong>What reaches the blockchain</strong>
+          <p>Only the ordinary zero-value self-transfer is broadcast. The EEG sample, model score, template, and match result are not included. No smart contract checks the EEG. This is local decryption followed by ordinary wallet signing—not an on-chain biometric check.</p>
+        </div>
+      </section>
+
+      <section class="card protocol-card">
+        <div class="section-heading">
+          <span class="step">DATA</span>
+          <div>
+            <h2>What the model has seen</h2>
+            <p>Training, enrollment, calibration, and demo test are separate uses of the dataset.</p>
+          </div>
+        </div>
+        <div class="protocol-grid">
+          <div class="protocol-step">
+            <span>MODEL TRAINING · OPTIMIZER UPDATES</span>
+            <strong id="training-split">Loading checkpoint details…</strong>
+            <p id="training-count">The classifier learns representations from labeled recordings of these dataset participants.</p>
+          </div>
+          <div class="protocol-step">
+            <span>ENROLLMENT · TEMPLATE ONLY</span>
+            <strong id="enrollment-split">Session 4 · training frequencies</strong>
+            <p>Session 4 recordings create the stored comparison templates. They do not update the model weights.</p>
+          </div>
+          <div class="protocol-step">
+            <span>THRESHOLD CALIBRATION · NOT TRAINING</span>
+            <strong id="calibration-split">Session 5 · held-out frequencies</strong>
+            <p>Session 5 scores choose the match threshold. The model weights are not trained on this session.</p>
+          </div>
+          <div class="protocol-step">
+            <span>DEMO AUTHENTICATION · HELD-OUT SESSION</span>
+            <strong id="test-split">Session 6 · held-out frequencies</strong>
+            <p>The UI selects cached recordings from this session to simulate a new reading; it is not a live headset stream.</p>
+          </div>
+        </div>
+        <p class="protocol-note">
+          Important: sessions 4–6 are unseen by training weight updates, but the people are the same 100 dataset subjects represented in training. This demonstrates cross-session matching for known dataset identities—not enrollment or validation of entirely new people.
+        </p>
+      </section>
+
+      <section class="card demo-limits">
+        <div class="section-heading">
+          <span class="step">LIMITS</span>
+          <div>
+            <h2>Why it is demo-only</h2>
+            <p>Useful for showing the interaction; insufficient for protecting a wallet.</p>
+          </div>
+        </div>
+        <ul>
+          <li><strong>Public recordings can be replayed.</strong> Anyone with the dataset can submit the same sample; this does not demonstrate liveness or headset capture.</li>
+          <li><strong>The browser gate is bypassable.</strong> Browser code and IndexedDB are under the user's control; modified code can retrieve the stored AES key and decrypt the vault without passing the model.</li>
+          <li><strong>Dataset identities are not wallet owners.</strong> The 100 subject IDs are anonymous research labels, not enrollment of real wallet users.</li>
+          <li><strong>Not validated across hardware or real users.</strong> Results are from one dataset and do not establish passive recognition, different headset placements, or spoof resistance.</li>
+          <li><strong>No ZK authorization proof is generated.</strong> The demo reports a model score locally; it does not prove inference or matching on-chain.</li>
+          <li><strong>This does not equal secure biometric key storage.</strong> The private key exists in browser memory while unlocked, and JavaScript cannot guarantee secure erasure.</li>
+        </ul>
+        <p class="safe-use">Use only a throwaway Base Sepolia account and test ETH. Never use real funds or connect a mainnet wallet.</p>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <span class="step">01</span>
+          <div>
+            <h2>Create your device-local test wallet</h2>
+            <p>A random key is encrypted in this browser. The app never sends the key to the local model service.</p>
+          </div>
+        </div>
+        <button id="create-wallet-button" class="button primary">Create local wallet</button>
+        <button id="lock-wallet-button" class="button secondary" disabled>Lock wallet</button>
+        <div id="wallet-state" class="status muted">No local wallet created</div>
+        <div id="key-display" class="key-display hidden">
+          <div class="key-value encrypted-key">
+            <div class="key-heading">
+              <strong>ENCRYPTED PRIVATE KEY · STORED</strong>
+              <span>AES-GCM · Base64 ciphertext</span>
+            </div>
+            <code id="encrypted-key-value">Create a wallet to generate ciphertext.</code>
+          </div>
+          <div id="decrypted-key-panel" class="key-value decrypted-key hidden">
+            <div class="key-heading">
+              <strong>DECRYPTED PRIVATE KEY · IN PAGE MEMORY</strong>
+              <span>Visible only after a passing model check</span>
+            </div>
+            <code id="decrypted-key-value"></code>
+          </div>
+          <p class="key-warning">These are disposable demo credentials. Anyone who sees the decrypted value can control this test wallet. Do not fund it with anything valuable or reuse this key.</p>
+        </div>
+        <div class="profile-row">
+          <label for="profile-subject">Demo profile</label>
+          <select id="profile-subject"></select>
+          <button id="register-button" class="button secondary" disabled>Enroll profile</button>
+        </div>
+        <div id="profile-state" class="status muted">Create a wallet, then assign a dataset demo profile.</div>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <span class="step">02</span>
+          <div>
+            <h2>Authenticate and unlock</h2>
+            <p>Choose the enrolled profile and a held-out dataset recording to simulate a headset reading.</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <label>
+            Replayed sample subject
+            <select id="sample-subject"></select>
+          </label>
+          <label>
+            SSVEP frequency
+            <select id="frequency">
+              <option value="8.5">8.5 Hz</option>
+              <option value="9.5">9.5 Hz</option>
+              <option value="10.5">10.5 Hz</option>
+              <option value="11.5">11.5 Hz</option>
+              <option value="12">12 Hz</option>
+            </select>
+          </label>
+        </div>
+        <button id="authenticate-button" class="button primary" disabled>Check EEG and unlock key</button>
+        <div id="auth-result" class="result hidden" role="status"></div>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <span class="step">03</span>
+          <div>
+            <h2>Unlock the demo action</h2>
+            <p>After a match decrypts the key, explicitly sign the challenge and separately confirm the testnet transaction.</p>
+          </div>
+        </div>
+        <div class="action-row">
+          <button id="sign-button" class="button secondary" disabled>Sign with unlocked key</button>
+          <button id="transaction-button" class="button primary" disabled>Confirm 0 ETH self-transfer</button>
+        </div>
+        <div id="action-state" class="status muted">No authentication has passed.</div>
+        <a id="explorer-link" class="explorer hidden" target="_blank" rel="noopener noreferrer">View transaction on BaseScan</a>
+      </section>
+
+      <footer>
+        <span id="model-status">Loading local model status…</span>
+        <span>Local inference · No EEG uploaded</span>
+      </footer>
+    </main>
+    <script src="/vendor/ethers.umd.min.js?v=2"></script>
+    <script src="/app.js?v=5"></script>
+  </body>
+</html>

@@ -12,6 +12,7 @@
   "type": "commonjs",
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",
+    "ethers": "^6.15.0",
     "fft.js": "^4.0.4"
   }
 }

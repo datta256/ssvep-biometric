@@ -1,9 +1,11 @@
 import argparse
 import json
+from pathlib import Path
 import numpy as np
 import torch
-import torch.nn as nn
 from sklearn.metrics import roc_auc_score, roc_curve
+from eeg_embedding_model import EEGEmbeddingNet
+from eeg_channels import CHANNEL_NAMES
 from paths import CACHE_ROOT, resolve_cache_file
 
 MODEL_FILE = CACHE_ROOT / "eeg_embedding_model.pt"
@@ -24,6 +26,12 @@ DEFAULT_TRAINED_FREQUENCIES = (8.0, 9.0, 10.0, 11.0)
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
+    "--model",
+    type=Path,
+    default=MODEL_FILE,
+    help="Model checkpoint to evaluate.",
+)
+parser.add_argument(
     "--enrollment-frequencies",
     type=float,
     nargs="+",
@@ -34,8 +42,14 @@ parser.add_argument(
     "--test-frequency",
     type=float,
     choices=SUPPORTED_FREQUENCIES,
-    default=12.0,
-    help="Held-out authentication frequency.",
+    help="Single held-out authentication frequency (default: 12 Hz).",
+)
+parser.add_argument(
+    "--test-frequencies",
+    type=float,
+    nargs="+",
+    choices=SUPPORTED_FREQUENCIES,
+    help="One or more held-out authentication frequencies.",
 )
 parser.add_argument(
     "--enrollment-session",
@@ -51,6 +65,16 @@ parser.add_argument(
     help="Separate session used to select an operating threshold.",
 )
 parser.add_argument(
+    "--calibration-frequencies",
+    type=float,
+    nargs="+",
+    choices=SUPPORTED_FREQUENCIES,
+    help=(
+        "Frequencies used for threshold calibration; defaults to enrollment "
+        "frequencies."
+    ),
+)
+parser.add_argument(
     "--test-session",
     type=int,
     default=6,
@@ -58,6 +82,17 @@ parser.add_argument(
     help="Held-out session used for final evaluation.",
 )
 args = parser.parse_args()
+if args.test_frequency is not None and args.test_frequencies is not None:
+    parser.error("Use either --test-frequency or --test-frequencies, not both.")
+test_frequencies = tuple(
+    sorted(
+        set(
+            args.test_frequencies
+            if args.test_frequencies is not None
+            else [args.test_frequency if args.test_frequency is not None else 12.0]
+        )
+    )
+)
 if args.enrollment_session == args.test_session:
     parser.error("Enrollment and test sessions must be distinct.")
 if args.calibration_session in (
@@ -68,113 +103,29 @@ if args.calibration_session in (
 
 
 # ---------------------------------------------------------
-# Model
-# ---------------------------------------------------------
-
-class EEGEmbeddingNet(nn.Module):
-
-    def __init__(
-        self,
-        num_subjects=100,
-        embedding_size=128
-    ):
-
-        super().__init__()
-
-        self.features = nn.Sequential(
-
-            nn.Conv2d(
-                1,
-                16,
-                kernel_size=(1, 31),
-                padding=(0, 15),
-                bias=False
-            ),
-
-            nn.BatchNorm2d(16),
-            nn.ELU(),
-
-            nn.Conv2d(
-                16,
-                32,
-                kernel_size=(64, 1),
-                groups=16,
-                bias=False
-            ),
-
-            nn.BatchNorm2d(32),
-            nn.ELU(),
-
-            nn.AvgPool2d(
-                kernel_size=(1, 4)
-            ),
-
-            nn.Dropout(0.25),
-
-            nn.Conv2d(
-                32,
-                64,
-                kernel_size=(1, 15),
-                padding=(0, 7),
-                bias=False
-            ),
-
-            nn.BatchNorm2d(64),
-            nn.ELU(),
-
-            nn.AvgPool2d(
-                kernel_size=(1, 4)
-            ),
-
-            nn.Dropout(0.25)
-        )
-
-        self.embedding = nn.Sequential(
-
-            nn.AdaptiveAvgPool2d((1, 1)),
-
-            nn.Flatten(),
-
-            nn.Linear(
-                64,
-                embedding_size
-            ),
-
-            nn.LayerNorm(
-                embedding_size
-            )
-        )
-
-        self.classifier = nn.Linear(
-            embedding_size,
-            num_subjects
-        )
-
-    def forward(self, x):
-
-        x = self.features(x)
-
-        embedding = self.embedding(x)
-
-        logits = self.classifier(embedding)
-
-        return embedding, logits
-
-
-# ---------------------------------------------------------
 # Load model
 # ---------------------------------------------------------
 
 print("Device:", DEVICE)
 
-model = EEGEmbeddingNet(
-    num_subjects=NUM_SUBJECTS,
-    embedding_size=EMBEDDING_SIZE
+checkpoint = torch.load(
+    args.model,
+    map_location=DEVICE
 )
 
-checkpoint = torch.load(
-    MODEL_FILE,
-    map_location=DEVICE
+channel_indices = tuple(
+    checkpoint.get("channel_indices", range(len(CHANNEL_NAMES)))
+)
+if not channel_indices or any(
+    index < 0 or index >= len(CHANNEL_NAMES)
+    for index in channel_indices
+):
+    raise ValueError("Model checkpoint has invalid EEG channel indices.")
+
+model = EEGEmbeddingNet(
+    num_subjects=NUM_SUBJECTS,
+    embedding_size=EMBEDDING_SIZE,
+    num_channels=len(channel_indices),
 )
 
 model.load_state_dict(
@@ -192,11 +143,16 @@ trained_sessions = tuple(
 enrollment_frequencies = tuple(
     args.enrollment_frequencies or trained_frequencies
 )
-test_frequency = args.test_frequency
-if test_frequency in trained_frequencies:
+calibration_frequencies = tuple(
+    sorted(
+        set(args.calibration_frequencies or enrollment_frequencies)
+    )
+)
+trained_test_frequencies = set(test_frequencies).intersection(trained_frequencies)
+if trained_test_frequencies:
     raise ValueError(
-        f"Test frequency {test_frequency:g} Hz was included in the model's "
-        "training frequencies; choose a held-out frequency."
+        "Test frequencies must be excluded from model training; overlap: "
+        f"{sorted(trained_test_frequencies)}."
     )
 held_out_sessions = {
     args.enrollment_session,
@@ -243,12 +199,19 @@ enrollment_items = [
 
 # Test uses only the requested held-out frequency.
 
+test_items_by_frequency = {
+    frequency: [
+        item
+        for item in metadata
+        if item["session"] == args.test_session
+        and float(item["frequency"]) == frequency
+    ]
+    for frequency in test_frequencies
+}
 test_items = [
     item
-    for item in metadata
-    if item["session"] == args.test_session
-    and float(item["frequency"])
-    == test_frequency
+    for frequency in test_frequencies
+    for item in test_items_by_frequency[frequency]
 ]
 
 calibration_items = []
@@ -257,13 +220,25 @@ if args.calibration_session is not None:
         item
         for item in metadata
         if item["session"] == args.calibration_session
-        and float(item["frequency"]) in enrollment_frequencies
+        and float(item["frequency"]) in calibration_frequencies
     ]
 
 if not enrollment_items:
     raise ValueError("No enrollment trials match the requested session/frequencies.")
 if not test_items:
-    raise ValueError("No test trials match the requested session/frequency.")
+    raise ValueError("No test trials match the requested session/frequencies.")
+for frequency, items in test_items_by_frequency.items():
+    if not items:
+        raise ValueError(
+            f"No test trials found for {frequency:g} Hz in session "
+            f"{args.test_session}."
+        )
+    frequency_subjects = {int(item["subject"]) for item in items}
+    if frequency_subjects != set(range(1, NUM_SUBJECTS + 1)):
+        raise ValueError(
+            f"Test data at {frequency:g} Hz must include all "
+            f"{NUM_SUBJECTS} subjects; found {len(frequency_subjects)}."
+        )
 if args.calibration_session is not None and not calibration_items:
     raise ValueError(
         "No calibration trials match the requested session/frequencies."
@@ -286,11 +261,19 @@ print()
 print("Protocol:")
 print("Training frequencies:", sorted(trained_frequencies))
 print("Enrollment session:", args.enrollment_session)
+print(
+    "Model channels:",
+    checkpoint.get(
+        "channel_names",
+        [CHANNEL_NAMES[index] for index in channel_indices],
+    ),
+)
 print("Enrollment frequencies:", sorted(enrollment_frequencies))
 if args.calibration_session is not None:
     print("Calibration session:", args.calibration_session)
+    print("Calibration frequencies:", list(calibration_frequencies))
 print("Test session:", args.test_session)
-print("Test frequency:", test_frequency)
+print("Test frequencies:", list(test_frequencies))
 
 print()
 print(
@@ -298,10 +281,8 @@ print(
     len(enrollment_items)
 )
 
-print(
-    f"{test_frequency:g} Hz test trials:",
-    len(test_items)
-)
+for frequency, items in test_items_by_frequency.items():
+    print(f"{frequency:g} Hz test trials:", len(items))
 if args.calibration_session is not None:
     print("Calibration trials:", len(calibration_items))
 
@@ -322,6 +303,7 @@ def extract_embeddings(items):
             eeg = np.load(
                 resolve_cache_file(item["file"])
             ).astype(np.float32)
+            eeg = eeg[channel_indices, :]
 
             eeg = torch.from_numpy(eeg)
 
@@ -369,12 +351,12 @@ enrollment_embeddings, enrollment_subjects = (
 )
 
 
-print()
-print(f"Extracting unseen {test_frequency:g} Hz embeddings...")
-
-test_embeddings, test_subjects = (
-    extract_embeddings(test_items)
-)
+test_data_by_frequency = {}
+for frequency, items in test_items_by_frequency.items():
+    print()
+    print(f"Extracting unseen {frequency:g} Hz embeddings...")
+    embeddings, subjects = extract_embeddings(items)
+    test_data_by_frequency[frequency] = (embeddings, subjects)
 
 
 # ---------------------------------------------------------
@@ -398,9 +380,11 @@ enrollment_embeddings = normalize_embeddings(
     enrollment_embeddings
 )
 
-test_embeddings = normalize_embeddings(
-    test_embeddings
-)
+for frequency, (embeddings, subjects) in test_data_by_frequency.items():
+    test_data_by_frequency[frequency] = (
+        normalize_embeddings(embeddings),
+        subjects,
+    )
 
 calibration_embeddings = np.empty((0, EMBEDDING_SIZE))
 calibration_subjects = np.empty(0, dtype=int)
@@ -466,9 +450,14 @@ def score_embeddings(embeddings, subjects):
     return np.asarray(scores), np.asarray(labels)
 
 
-print()
-print(f"Scoring {test_frequency:g} Hz test trials...")
-scores, labels = score_embeddings(test_embeddings, test_subjects)
+scores_by_frequency = {}
+labels_by_frequency = {}
+for frequency, (embeddings, subjects) in test_data_by_frequency.items():
+    scores_by_frequency[frequency], labels_by_frequency[frequency] = (
+        score_embeddings(embeddings, subjects)
+    )
+scores = np.concatenate(list(scores_by_frequency.values()))
+labels = np.concatenate(list(labels_by_frequency.values()))
 
 calibration_threshold = None
 if calibration_items:
@@ -493,139 +482,72 @@ if calibration_items:
     ]
 
 
-# ---------------------------------------------------------
-# ROC / EER
-# ---------------------------------------------------------
-
-auc = roc_auc_score(
-    labels,
-    scores
-)
-
-
-fpr, tpr, thresholds = roc_curve(
-    labels,
-    scores
-)
+def calculate_metrics(metric_scores, metric_labels):
+    metric_auc = roc_auc_score(metric_labels, metric_scores)
+    fpr, tpr, thresholds = roc_curve(metric_labels, metric_scores)
+    fnr = 1.0 - tpr
+    eer_index = int(np.argmin(np.abs(fpr - fnr)))
+    return {
+        "auc": metric_auc,
+        "eer": (fpr[eer_index] + fnr[eer_index]) / 2,
+        "eer_threshold": thresholds[eer_index],
+        "genuine": metric_scores[metric_labels == 1],
+        "impostor": metric_scores[metric_labels == 0],
+    }
 
 
-fnr = 1.0 - tpr
+def print_metrics(label, metric_scores, metric_labels):
+    metrics = calculate_metrics(metric_scores, metric_labels)
+    genuine_scores = metrics["genuine"]
+    impostor_scores = metrics["impostor"]
+    print()
+    print(f"--- {label} ---")
+    print(f"Genuine attempts:  {len(genuine_scores)}")
+    print(f"Impostor attempts: {len(impostor_scores)}")
+    print(f"Genuine mean:      {genuine_scores.mean():.6f}")
+    print(f"Genuine median:    {np.median(genuine_scores):.6f}")
+    print(f"Impostor mean:     {impostor_scores.mean():.6f}")
+    print(f"Impostor median:   {np.median(impostor_scores):.6f}")
+    print(f"ROC-AUC:           {metrics['auc']:.6f}")
+    print(f"Test EER:          {metrics['eer']:.6f} ({metrics['eer'] * 100:.4f}%)")
+    print(f"Test EER threshold:{metrics['eer_threshold']:.6f}")
+    if calibration_threshold is not None:
+        predictions = metric_scores >= calibration_threshold
+        false_accepts = int(np.sum((metric_labels == 0) & predictions))
+        false_rejects = int(np.sum((metric_labels == 1) & ~predictions))
+        impostor_count = int(np.sum(metric_labels == 0))
+        genuine_count = int(np.sum(metric_labels == 1))
+        far = false_accepts / impostor_count
+        frr = false_rejects / genuine_count
+        print(f"Calibrated threshold:{calibration_threshold:.6f}")
+        print(f"False accepts:      {false_accepts}")
+        print(f"False rejects:      {false_rejects}")
+        print(f"Calibrated FAR:     {far:.6f} ({far * 100:.4f}%)")
+        print(f"Calibrated FRR:     {frr:.6f} ({frr * 100:.4f}%)")
+        print(
+            "Balanced accuracy: "
+            f"{((1 - far) + (1 - frr)) / 2:.6f}"
+        )
 
-
-eer_index = np.argmin(
-    np.abs(
-        fpr - fnr
-    )
-)
-
-
-eer = (
-    fpr[eer_index]
-    + fnr[eer_index]
-) / 2
-
-
-eer_threshold = thresholds[
-    eer_index
-]
-genuine_scores = scores[labels == 1]
-impostor_scores = scores[labels == 0]
-
-
-# ---------------------------------------------------------
-# Results
-# ---------------------------------------------------------
 
 print()
 print("=" * 60)
 print("UNSEEN-FREQUENCY EEG VERIFICATION")
 print("=" * 60)
-
-print(
-    "Training frequencies:",
-    sorted(trained_frequencies)
-)
+print("Training frequencies:", sorted(trained_frequencies))
 print("Training sessions:", sorted(trained_sessions))
-
-print(
-    "Test frequency:",
-    test_frequency,
-    "Hz"
-)
-
-print()
-
-print(
-    "Genuine attempts:",
-    len(genuine_scores)
-)
-
-print(
-    "Impostor attempts:",
-    len(impostor_scores)
-)
-
-print()
-
-print(
-    f"Genuine mean:    "
-    f"{genuine_scores.mean():.6f}"
-)
-
-print(
-    f"Genuine median:  "
-    f"{np.median(genuine_scores):.6f}"
-)
-
-print(
-    f"Impostor mean:   "
-    f"{impostor_scores.mean():.6f}"
-)
-
-print(
-    f"Impostor median: "
-    f"{np.median(impostor_scores):.6f}"
-)
-
-print()
-
-print(
-    f"ROC-AUC:         "
-    f"{auc:.6f}"
-)
-
-print(
-    f"EER:             "
-    f"{eer:.6f}"
-)
-
-print(
-    f"EER percentage:  "
-    f"{eer * 100:.4f}%"
-)
-
-print(
-    f"EER threshold:   "
-    f"{eer_threshold:.6f}"
-)
-
-print("=" * 60)
-
+print("Test frequencies:", list(test_frequencies))
+print("Test session:", args.test_session)
 if calibration_threshold is not None:
-    test_predictions = scores >= calibration_threshold
-    false_accepts = int(np.sum((labels == 0) & test_predictions))
-    false_rejects = int(np.sum((labels == 1) & ~test_predictions))
-    impostor_count = int(np.sum(labels == 0))
-    genuine_count = int(np.sum(labels == 1))
-    far = false_accepts / impostor_count
-    frr = false_rejects / genuine_count
-    print()
-    print("CALIBRATED OPERATING POINT")
     print("Calibration session:", args.calibration_session)
     print(f"Calibration threshold: {calibration_threshold:.6f}")
     print(f"Calibration EER: {calibration_eer:.6f} ({calibration_eer * 100:.4f}%)")
-    print(f"False accepts: {false_accepts}")
-    print(f"False rejects: {false_rejects}")
-    print(f"FAR: {far:.6f} ({far * 100:.4f}%)")
-    print(f"FRR: {frr:.6f} ({frr * 100:.4f}%)")
-    print(f"Balanced accuracy: {((1 - far) + (1 - frr)) / 2:.6f}")
+
+for frequency in test_frequencies:
+    print_metrics(
+        f"{frequency:g} Hz",
+        scores_by_frequency[frequency],
+        labels_by_frequency[frequency],
+    )
+print_metrics("POOLED HELD-OUT FREQUENCIES", scores, labels)
+print("=" * 60)

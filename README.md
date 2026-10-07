@@ -590,6 +590,143 @@ cache\eeg_embedding_model.pt
 
 ------------------------------------------------------------------------
 
+# 13.1 Channel-reduction experiment
+
+The model's spatial convolution is configurable for a reduced channel
+count. To produce a first 8-channel candidate ranking, run:
+
+``` powershell
+python src\select_eeg_channels.py
+```
+
+This trains a temporary 64-channel classifier on sessions 0–2 and ranks
+channels by the accuracy change when each channel is individually
+zeroed on held-out session 3. It does not save or replace the existing
+checkpoint. This is a screening heuristic, not an exhaustive search of
+all 8-channel combinations and not biometric verification performance.
+
+After reviewing the printed candidate names, train a reduced model on
+sessions 0–3 and save it separately. Replace the example channel names
+with the eight returned by the selector:
+
+``` powershell
+python src\train_eeg_embedding.py --frequencies 8 9 10 11 --sessions 0 1 2 3 --seed 42 --channels PO7 PO5 PO3 POZ PO4 PO6 PO8 OZ --output E:\ssvep-cache\eeg_embedding_8ch.pt
+```
+
+Evaluate that checkpoint with the strict enrollment/calibration/test
+split:
+
+``` powershell
+python src\verify_embedding.py --model E:\ssvep-cache\eeg_embedding_8ch.pt --enrollment-session 4 --calibration-session 5 --test-session 6 --test-frequency 12
+```
+
+Only the final held-out session-6 result can determine whether the
+8-channel model preserves authentication performance. The channel-name
+mapping currently follows the assumed 64-channel cache order used by
+`channel_information.py`; the existing cache metadata does not record
+channel names, so verify the source channel ordering before treating a
+printed name as definitive.
+
+To run a broader one-shot evaluation of a trained candidate, pass all
+frequencies excluded from training. For the 8-channel model trained on
+8, 9, 10, and 11 Hz, this evaluates 8.5, 9.5, 10.5, 11.5, and 12 Hz:
+
+``` powershell
+python src\verify_embedding.py --model E:\ssvep-cache\eeg_embedding_8ch.pt --enrollment-session 4 --calibration-session 5 --calibration-frequencies 8.5 9.5 10.5 11.5 12 --test-session 6 --test-frequencies 8.5 9.5 10.5 11.5 12
+```
+
+It reports metrics per frequency and pooled, using one threshold selected
+on session 5 at those same held-out frequencies. The session-6 pooled results remain held out, but
+the per-frequency and pooled scores are correlated because they reuse
+the same subjects and enrollment templates. This is broader evidence
+than a single-frequency check, not independent-subject validation.
+
+For a local feasibility benchmark of proving the 8-channel model's
+inference, use EZKL:
+
+``` powershell
+python src\prove_eeg_embedding_8ch.py
+```
+
+The script uses a cached training trial, writes proof artifacts beneath
+`cache\zk_eeg_embedding_8ch\` (or the configured cache directory), and
+does not retrain or overwrite the model checkpoint. This first benchmark
+exposes the embedding as a public proof output so it can measure the
+actual model circuit; do not publish that proof or treat it as a private
+wallet authorization proof. It proves neither the biometric match nor
+live sensor capture. After checking feasibility, the next circuit should
+keep the embedding and template private and expose only a challenge-bound
+authorization result plus an enrollment commitment check.
+
+EZKL is an EVM-oriented path for a later verifier deployment. Base
+Sepolia is the recommended first testnet target; an EVM-compatible
+verifier can also be evaluated on OP Sepolia. Benchmark proof size,
+verification gas, and calldata cost before choosing a production chain.
+
+------------------------------------------------------------------------
+
+# 13.2 Dataset-backed Base Sepolia wallet demo
+
+This demo creates a random local test wallet in the browser and encrypts
+its private key with AES-GCM. It replays the public session-6 dataset
+recordings as simulated EEG, compares them against session-4 enrollment
+templates, and uses session 5 at the five held-out frequencies to select
+the threshold. On a passing model result, the page decrypts the wallet
+key into JavaScript memory, signs a challenge, and can submit a
+zero-value self-transaction directly through the Base Sepolia RPC.
+For recording a walkthrough, the page displays the AES-GCM IV and
+ciphertext after wallet creation, then displays the plaintext private key
+only after the model accepts a replayed sample. Locking or a failed/new
+authentication clears the plaintext display.
+
+Install the JavaScript dependencies once after checkout:
+
+``` powershell
+npm install
+```
+
+Run it from the activated Python environment after setting the cache path:
+
+``` powershell
+$env:SSVEP_CACHE_DIR = "E:\ssvep-cache"
+python src\wallet_demo.py --model E:\ssvep-cache\eeg_embedding_8ch.pt
+```
+
+Open `http://127.0.0.1:8765`, create a local wallet, and record its
+displayed address. Fund only that throwaway address with Base Sepolia test
+ETH. Select and enroll a demo subject ID, then choose the same ID as the
+replayed sample to demonstrate acceptance and key decryption. Sign the
+challenge and separately confirm the zero-value self-transfer. A
+mismatching subject/sample pair should normally be rejected. This wallet
+is not connected to MetaMask; the browser creates and uses its own key.
+
+The UI shows the model's training sessions/frequencies and cached
+training-trial count from the checkpoint and metadata. The protocol is:
+train on sessions 0–3 at 8, 9, 10, and 11 Hz; build enrollment templates
+from session 4 at those frequencies; calibrate the threshold on session 5
+at 8.5, 9.5, 10.5, 11.5, and 12 Hz; and simulate authentication with
+session 6 at those five held-out frequencies. Sessions 4–6 are excluded
+from training weight updates, but all 100 dataset identities appear in
+training. This demonstrates cross-session matching for known dataset
+subjects, not validation on entirely new people.
+
+**This is a research-only local-key demonstration, not a secure wallet or
+an on-chain biometric verifier.** The wallet key is random—not derived
+from EEG—and is encrypted in browser storage. The matching AES-GCM key
+is stored as a non-exportable Web Crypto key in IndexedDB. The app
+decrypts the private key only after a passing model result and uses it
+from page memory to sign. However, the page's JavaScript can access both
+browser storage areas, so a user or injected script can bypass the EEG
+check. The unlocked private key is deliberately visible in the UI for
+demonstration and must be treated as exposed; never fund that wallet with
+anything valuable or reuse it. The public samples are replayable; the
+model decision is made by a local service; no contract verifies the EEG;
+and JavaScript cannot guarantee erasure of a decrypted key from memory.
+Subject IDs are anonymous dataset labels, not real user identities. Never
+use real funds.
+
+------------------------------------------------------------------------
+
 # 14. All-frequency training option
 
 The current supported biometric evaluation is the unseen-frequency
@@ -1089,6 +1226,97 @@ Proof size
 Proof verification time
 On-chain verification gas
 ```
+
+### Project-specific Halo2 score circuit
+
+The experimental circuit in `zk/circuits` proves a narrower statement than
+the architecture above: a private 64-coordinate signed-byte embedding has a
+dot product with a **public** 64-coordinate enrollment template at or above
+a public threshold. It does not prove EEG preprocessing, model inference,
+sensor origin, or template privacy, and it is not production-ready.
+
+Run the circuit tests and generate/verify the local demonstration proof from
+the repository root in PowerShell:
+
+``` powershell
+cargo test --manifest-path zk\circuits\Cargo.toml
+cargo run --release --manifest-path zk\circuits\Cargo.toml -- demo
+```
+
+The tests cover acceptance, rejection below threshold, rejection of an
+out-of-range threshold, and binding the public template to the scored
+template. On the development machine, the demo produced a 4,736-byte proof
+and verified it successfully (about 22 ms key generation, 148 ms proving,
+and 4 ms verification). These are single-run local timings, not a benchmark;
+they vary by machine and exclude circuit work done outside the proof.
+
+### Accuracy versus proof feasibility experiment
+
+The high-accuracy model remains the biometric reference: its held-out
+session/frequency protocol gives 99.2121% balanced accuracy, 0.5758% FAR,
+1.0000% FRR, and 0.998454 ROC-AUC. The model class is shared in
+`src/eeg_embedding_model.py` by the trainer, verifier, and distillation
+experiment so that these use the same architecture.
+
+A compact student was trained using the reference model's class logits and
+within-batch embedding similarities, using only sessions 0–3 and 8–11.5 Hz.
+Evaluation used the same untouched enrollment (session 4), calibration
+(session 5), and test (session 6 at 12 Hz) partitions:
+
+``` text
+Distilled student:
+  Test ROC-AUC:          0.953352
+  Test-derived EER:      10.8434%
+  Calibration threshold: 0.487930
+  Test FAR:              10.6162%
+  Test FRR:              12.0000%
+  Balanced accuracy:    88.6919%
+
+Directly trained compact v2 comparison:
+  Test ROC-AUC:          0.959682
+  Test FAR:              10.6768%
+  Test FRR:              9.0000%
+  Balanced accuracy:    90.1616%
+```
+
+Neither compact model is close enough to the reference to replace it for
+authentication. The distillation script is experimental; its training-set
+classification accuracy is not a substitute for held-out biometric
+verification metrics.
+
+An initial EZKL feasibility attempt exported the reference network together
+with a fixed enrollment template and a public accept/reject output. Settings
+generation aborted on this 16 GB RAM development host with a failed
+798,720,000-byte allocation, before producing a circuit or proof. This
+experiment therefore does **not** demonstrate an end-to-end proof. Its
+template was fixed/public as well, so it was not a template-privacy design.
+The 6 GB GPU does not by itself address this observed host-memory failure;
+EZKL's documented GPU acceleration requires a GPU-enabled build with
+ICICLE.
+
+Reproduce the student experiment after training the reference model and
+building the cache:
+
+``` powershell
+python src\train_zk_eeg_distilled.py `
+  --teacher "$env:SSVEP_CACHE_DIR\eeg_embedding_model.pt" `
+  --output "$env:SSVEP_CACHE_DIR\zk_eeg_distilled_model.pt"
+
+python src\verify_zk_eeg.py `
+  --model "$env:SSVEP_CACHE_DIR\zk_eeg_distilled_model.pt" `
+  --enrollment-session 4 `
+  --calibration-session 5 `
+  --test-session 6 `
+  --test-frequency 12
+```
+
+The next gate is to keep the accurate reference model and reduce proving
+cost without assuming that distillation preserves biometric accuracy:
+first investigate a closer, quantization-aware student or structured
+input/model reduction, then require the strict held-out FAR/FRR/AUC
+protocol before attempting to prove that candidate. A proof must bind the
+actual inference and match decision; the current Halo2 score-only demo
+does not.
 
 ------------------------------------------------------------------------
 
